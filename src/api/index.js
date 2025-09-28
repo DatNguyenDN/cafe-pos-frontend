@@ -1,149 +1,98 @@
 // src/api/index.js
 import axios from "axios";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3000/api";
+// Base URL: local dev hoặc production
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:4000/api";
+
+// Helper: lấy token từ localStorage
 const getToken = () => localStorage.getItem('token');
 
 const api = axios.create({
   baseURL: API_BASE,
   timeout: 10000,
+  headers: {
+    'Content-Type': 'application/json',
+  },
 });
 
-// Request interceptor: attach token
-api.interceptors.request.use((cfg) => {
-  const token = localStorage.getItem("token");
-  if (token) cfg.headers.Authorization = `Bearer ${token}`;
-  return cfg;
-});
-
-// ========== Auth ==========
-export async function login(credentials) {
-  const r = await api.post("/auth/login", credentials);
-  // console.log("Login response:", r.data);
-  return r.data;
-}
-
-// ========== Menu / Products ==========
-export async function fetchProducts(params) {
-  // BE hiện đang expose menu tại /menu
-  return api.get("/menu", { params }).then((r) => r.data);
-}
-
-// CREATE
-export async function createMenuItem(data) {
+// Request interceptor: attach token nếu có
+api.interceptors.request.use((config) => {
   const token = getToken();
-  return api.post('/menu', data, {
-    headers: { Authorization: `Bearer ${token}` },
-  }).then(r => r.data);
-}
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+}, (error) => Promise.reject(error));
 
-// UPDATE
-export async function updateMenuItem(id, data) {
-  const token = getToken();
-  return api.put(`/menu/${id}`, data, {
-    headers: { Authorization: `Bearer ${token}` },
-  }).then(r => r.data);
-}
-
-// DELETE
-export async function deleteMenuItem(id) {
-  const token = getToken();
-  return api.delete(`/menu/${id}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  }).then(r => r.data);
-}
-
-// ========== Tables ==========
-export async function fetchTables(params) {
-  return api.get("/tables", { params }).then((r) => r.data);
-}
-
-export async function getTable(id) {
-  return api.get(`/tables/${id}`).then((r) => r.data);
-}
-
-export async function createTable(name) {
-  return api.post("/tables", { name }).then((r) => r.data);
-}
-
-export async function setTableAvailability(id, isAvailable) {
-  return api
-    .patch(`/tables/${id}/availability`, { isAvailable })
-    .then((r) => r.data);
-}
-
-// ========== Orders ==========
-/**
- * Lấy các order theo bàn
- * GET /orders/table/:tableId
- */
-export async function fetchOrdersByTable(tableId) {
-  return api.get(`/orders/table/${tableId}`).then((r) => r.data);
-}
-
-/**
- * Lấy tất cả orders (có thể sort asc|desc)
- * GET /orders?sort=asc
- */
-export async function fetchOrders(params = {}) {
-  return api.get("/orders", { params }).then((r) => r.data);
-}
-
-/**
- * Tạo order mới cho bàn
- * POST /orders
- * body: { tableId: number, items: { menuItemId:number, quantity:number }[] }
- */
-export async function createOrder({ tableId, items }) {
-  return api.post("/orders", { tableId, items }).then((r) => r.data);
-}
-
-/**
- * Cập nhật order hiện có
- * PATCH /orders/:id
- * body: { items: { menuItemId:number, quantity:number }[] }
- */
-export async function updateOrder(orderId, items) {
-  return api.patch(`/orders/${orderId}`, { items }).then((r) => r.data);
-}
-
-// Lấy order đang hoạt động (pending) của 1 bàn
-export async function getActiveOrderByTable(tableId) {
-  return api.get(`/orders/table/${tableId}/active`).then((r) => r.data);
-}
-
-// Lấy chi tiết 1 order (nếu cần refetch)
-export async function getOrder(orderId) {
-  return api.get(`/orders/${orderId}`).then((r) => r.data);
-}
-
-
-/**
- * Thanh toán (pay) order
- * PATCH /orders/:id/pay
- */
-export async function payOrder(orderId) {
-  return api.patch(`/orders/${orderId}/pay`).then((r) => r.data);
-}
-
-export async function cancelOrder(orderId, reason) {
-  return api.post(`/orders/${orderId}/cancel`, { reason }).then((r) => r.data);
-}
-
-
-
-// ========== Customers (giữ nguyên) ==========
-export async function fetchCustomers(q) {
-  return api.get("/customers", { params: { q } }).then((r) => r.data);
-}
-
-// ========== Tính tổng doanh thu ==========
-export async function getRevenue(params = {}) {
-  return api.get('/orders/revenue', { params }).then(r => r.data);
-}
-
-
-
-
+// Response interceptor: có thể handle lỗi global
+api.interceptors.response.use(
+  res => res,
+  err => {
+    // Ví dụ: logout nếu token expired
+    if (err.response?.status === 401) {
+      localStorage.removeItem('token');
+      // window.location.href = '/login'; // nếu muốn redirect
+    }
+    return Promise.reject(err);
+  }
+);
 
 export default api;
+
+// ====== Auth ======
+export const login = async (credentials) => {
+  const res = await api.post("/auth/login", credentials);
+  return res.data;
+};
+
+export const fetchProducts = async (params) => {
+  const res = await api.get("/menu", { params });
+  return res.data;
+};
+
+export const createMenuItem = async (data) => {
+  const res = await api.post("/menu", data);
+  return res.data;
+};
+
+export const updateMenuItem = async (id, data) => {
+  const res = await api.put(`/menu/${id}`, data);
+  return res.data;
+};
+
+export const deleteMenuItem = async (id) => {
+  const res = await api.delete(`/menu/${id}`);
+  return res.data;
+};
+
+// ====== Tables ======
+export const fetchTables = async (params) => (await api.get("/tables", { params })).data;
+export const getTable = async (id) => (await api.get(`/tables/${id}`)).data;
+export const createTable = async (name) => (await api.post("/tables", { name })).data;
+export const setTableAvailability = async (id, isAvailable) =>
+  (await api.patch(`/tables/${id}/availability`, { isAvailable })).data;
+
+// ====== Orders ======
+export const fetchOrdersByTable = async (tableId) =>
+  (await api.get(`/orders/table/${tableId}`)).data;
+export const fetchOrders = async (params = {}) =>
+  (await api.get("/orders", { params })).data;
+export const createOrder = async ({ tableId, items }) =>
+  (await api.post("/orders", { tableId, items })).data;
+export const updateOrder = async (orderId, items) =>
+  (await api.patch(`/orders/${orderId}`, { items })).data;
+export const getActiveOrderByTable = async (tableId) =>
+  (await api.get(`/orders/table/${tableId}/active`)).data;
+export const getOrder = async (orderId) => (await api.get(`/orders/${orderId}`)).data;
+export const payOrder = async (orderId) =>
+  (await api.patch(`/orders/${orderId}/pay`)).data;
+export const cancelOrder = async (orderId, reason) =>
+  (await api.post(`/orders/${orderId}/cancel`, { reason })).data;
+
+// ====== Customers ======
+export const fetchCustomers = async (q) =>
+  (await api.get("/customers", { params: { q } })).data;
+
+// ====== Revenue ======
+export const getRevenue = async (params = {}) =>
+  (await api.get('/orders/revenue', { params })).data;
