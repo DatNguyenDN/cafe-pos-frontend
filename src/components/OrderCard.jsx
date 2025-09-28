@@ -47,39 +47,38 @@ export default function OrderCard({ order, onEdit, onDelete, onServe }) {
             </div>
 
             {/* Items */}
-            <div className="mt-4">
-                <div className="text-sm text-slate-600 mb-3 flex items-center justify-between">
-                    <span>
-                        <strong>{order.items.length}</strong> món
-                    </span>
-                    <span className="font-bold text-emerald-600 text-lg">
-                        {order.total.toLocaleString()}₫
-                    </span>
-                </div>
+<div className="mt-4">
+  <div className="text-sm text-slate-600 mb-3 flex items-center justify-between">
+    <span>
+      <strong>{order.order_item?.length}</strong> món
+    </span>
+    <span className="font-bold text-emerald-600 text-lg">
+      {(order.total || 0).toLocaleString()}₫
+    </span>
+  </div>
 
-                <ul className="text-sm text-slate-700 space-y-1 max-h-28 overflow-auto pr-1">
-                    {order.items.slice(0, 4).map((it, idx) => (
-                        <li
-                            key={idx}
-                            className="flex justify-between items-center"
-                        >
-                            <span className="truncate pr-2 text-slate-800">
-                                {it.menuItem.name} ×{" "}
-                                <span className="font-semibold">
-                                    {it.quantity}
-                                </span>
-                            </span>
-                            <span className="text-slate-600">
-                                {(it.menuItem.price * it.quantity).toLocaleString()}₫
-                            </span>
-                        </li>
-                    ))}
-                    {order.items.length > 4 && (
-                        <li className="text-xs text-slate-400 italic">
-                            + {order.items.length - 4} món khác
-                        </li>
-                    )}
-                </ul>
+  <ul className="text-sm text-slate-700 space-y-1 max-h-28 overflow-auto pr-1">
+    {order.order_item?.slice(0, 4).map((it) => (
+      <li
+        key={it.id}
+        className="flex justify-between items-center"
+      >
+        <span className="truncate pr-2 text-slate-800">
+          {it.menu_items?.name} ×{" "}
+          <span className="font-semibold">{it.quantity}</span>
+        </span>
+        <span className="text-slate-600">
+          {(it.price * it.quantity).toLocaleString()}₫
+        </span>
+      </li>
+    ))}
+    {order.order_item?.length > 4 && (
+      <li className="text-xs text-slate-400 italic">
+        + {order.order_item.length - 4} món khác
+      </li>
+    )}
+  </ul>
+
 
                 {/* Thời gian vào/ra */}
                 <div className="mt-4 text-xs text-slate-500 space-y-1 border-t pt-2">

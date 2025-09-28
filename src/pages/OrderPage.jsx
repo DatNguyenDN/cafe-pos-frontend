@@ -1,33 +1,29 @@
+// src/pages/OrderPage.jsx
 import React, { useEffect, useState, useRef } from "react";
 import OrderCard from "../components/OrderCard";
 import EditOrderModal from "../components/EditOrderModal";
-import { io } from "socket.io-client";
-import { fetchOrders, cancelOrder } from "../api"; // dùng API sẵn có
-import { useNavigate } from "react-router-dom";
 import PaymentModal from "../components/PaymentModal";
-const API = import.meta.env.VITE_API_URL || "http://localhost:4000";
+import { supabase } from "../lib/supabase";
+import { useNavigate } from "react-router-dom";
+import { fetchOrders } from "../api/index"; // ✅ import hàm đã refactor
 
 const TABS = ["pending", "paid", "cancelled"];
 
 export default function OrderPage() {
     const [orders, setOrders] = useState([]);
+    console.log("Orders:", orders);
     const [loading, setLoading] = useState(true);
     const [editingOrder, setEditingOrder] = useState(null);
-    const [activeTab, setActiveTab] = useState("pending"); // mặc định pending
-    const socketRef = useRef(null);
+    const [activeTab, setActiveTab] = useState("pending");
     const [selectedOrder, setSelectedOrder] = useState(null);
     const navigate = useNavigate();
-    console.log("Rendering selectedOrder, selectedOrder:", selectedOrder);
-    // Load orders FIFO (createdAt asc)
+    const socketRef = useRef(null);
+
     async function loadOrders() {
         setLoading(true);
         try {
-            const data = await fetchOrders({ sort: "asc" });
-            setOrders(
-                data.sort(
-                    (a, b) => new Date(a.createdAt) - new Date(b.createdAt)
-                )
-            );
+            const data = await fetchOrders(); // ✅ dùng api helper
+            setOrders(data);
         } catch (err) {
             console.error("Fetch orders failed:", err);
         } finally {
@@ -38,38 +34,25 @@ export default function OrderPage() {
     useEffect(() => {
         loadOrders();
 
-        // Socket.IO for realtime updates
-        socketRef.current = io(API, { path: "/ws/socket.io" });
-        const s = socketRef.current;
-
-        s.on("connect", () => {
-            console.log("✅ Connected to WS");
-        });
-
-        s.on("order.created", (order) => {
-            setOrders((prev) => {
-                const next = [...prev, order];
-                next.sort(
-                    (a, b) => new Date(a.createdAt) - new Date(b.createdAt)
-                );
-                return next;
-            });
-        });
-
-        s.on("order.updated", (order) => {
-            setOrders((prev) =>
-                prev.map((o) => (o.id === order.id ? order : o))
-            );
-        });
-
-        s.on("order.deleted", ({ id }) => {
-            setOrders((prev) => prev.filter((o) => o.id !== id));
-        });
+        // realtime sub
+        const orderSub = supabase
+            .channel("public:order")
+            .on(
+                "postgres_changes",
+                { event: "*", schema: "public", table: "order" },
+                () => loadOrders()
+            )
+            .subscribe();
 
         return () => {
-            s.disconnect();
+            supabase.removeChannel(orderSub);
         };
     }, []);
+
+    const filteredOrders = orders.filter(
+        (o) => (o.status || "").toLowerCase() === activeTab
+    );
+    console.log("Filtered Orders:", filteredOrders);
 
     function handleOpenEdit(order) {
         setEditingOrder(order);
@@ -78,31 +61,22 @@ export default function OrderPage() {
         setEditingOrder(null);
     }
 
-    // async function handleMarkDone(orderId) {
-    //     try {
-    //         await fetch(`${API}/orders/${orderId}/complete`, {
-    //             method: "POST",
-    //         });
-    //         // optimistic UI → socket sẽ update
-    //     } catch (err) {
-    //         console.error(err);
-    //     }
-    // }
-
-    async function handleDelete(orderId, reason) {
+    async function handleDelete(orderId) {
         if (!confirm("Bạn chắc chắn muốn huỷ order này?")) return;
         try {
-            await cancelOrder(orderId, reason);
+            // set status cancelled
+            await supabase
+                .from("order")
+                .update({
+                    status: "CANCELLED",
+                    cancelledAt: new Date().toISOString(),
+                })
+                .eq("id", orderId);
             loadOrders();
-            // socket sẽ update
         } catch (err) {
             console.error(err);
         }
     }
-
-    const filteredOrders = orders.filter(
-        (o) => o.status.toLowerCase() === activeTab
-    );
 
     return (
         <div className="min-h-screen bg-slate-50 p-6">
@@ -110,7 +84,7 @@ export default function OrderPage() {
                 <div className="flex items-center gap-3">
                     <button
                         onClick={() => navigate("/pos")}
-                        className="px-4 py-2 rounded-lg bg-white shadow-sm border hover:bg-slate-100 transition"
+                        className="px-4 py-2 rounded-lg bg-white shadow-sm border hover:bg-slate-100"
                     >
                         ⬅️ Quay lại
                     </button>
@@ -152,67 +126,65 @@ export default function OrderPage() {
                     </div>
                 ) : (
                     <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-                        {filteredOrders.map((order) => {
-                            const total = order.items.reduce(
-                                (sum, item) =>
-                                    sum + item.quantity * item.menuItem.price,
-                                0
-                            );
-
-                            const orderData = {
-                                id: order.id,
-                                items: order.items.map((item) => ({
-                                    menuItemId: item.menuItem.id,
-                                    name: item.menuItem.name,
-                                    qty: item.quantity,
-                                    price: item.menuItem.price,
-                                })),
-                                total,
-                            };
-                            console.log(
-                                "Rendering orderData, orderData:",
-                                orderData
-                            );
-
-                            return (
-                                <OrderCard
-                                    key={order.id}
-                                    order={order}
-                                    onEdit={() => handleOpenEdit(order)}
-                                    onDelete={() => handleDelete(order.id)}
-                                    onServe={() => setSelectedOrder(orderData)} // ✅ chỉ set orderData
-                                />
-                            );
-                        })}
+                        {filteredOrders.map((order) => (
+                            <OrderCard
+                                key={order.id}
+                                order={order}
+                                onEdit={() => setEditingOrder(order)}
+                                onDelete={() => handleDelete(order.id)}
+                                onServe={() => setSelectedOrder(order)}
+                            />
+                        ))}
                     </div>
                 )}
             </main>
 
-            {/* Payment Modal */}
+            {/* Payment modal */}
             <PaymentModal
                 isOpen={!!selectedOrder}
                 onClose={() => setSelectedOrder(null)}
                 order={selectedOrder}
-                onConfirm={() => {
-                    console.log("Thanh toán", selectedOrder);
-                    setSelectedOrder(null);
+                onConfirm={async () => {
+                    if (!selectedOrder) return;
+                    try {
+                        await supabase
+                            .from("order")
+                            .update({
+                                status: "PAID",
+                                updatedAt: new Date().toISOString(),
+                            })
+                            .eq("id", selectedOrder.id);
+                        setSelectedOrder(null);
+                        loadOrders();
+                    } catch (e) {
+                        console.error(e);
+                    }
                 }}
-                onCancel={(id, reason) => {
-                    console.log("Huỷ order", id, reason);
-                    setSelectedOrder(null);
-                    // loadOrders();
+                onCancel={async (id, reason) => {
+                    try {
+                        await supabase
+                            .from("order")
+                            .update({
+                                status: "cancelled",
+                                cancelReason: reason,
+                                cancelledAt: new Date().toISOString(),
+                            })
+                            .eq("id", id);
+                        setSelectedOrder(null);
+                        loadOrders();
+                    } catch (e) {
+                        console.error(e);
+                    }
                 }}
-                onPrint={() => console.log("In bill", selectedOrder)}
+                onPrint={() => console.log("Print", selectedOrder)}
             />
 
+            {/* Edit order */}
             {editingOrder && (
                 <EditOrderModal
                     order={editingOrder}
-                    onClose={handleCloseEdit}
-                    onSaved={() => {
-                        handleCloseEdit();
-                        loadOrders();
-                    }}
+                    onClose={() => setEditingOrder(null)}
+                    onSaved={loadOrders}
                 />
             )}
         </div>

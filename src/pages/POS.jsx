@@ -6,76 +6,75 @@ import React, {
     useRef,
     useCallback,
 } from "react";
+import { Link } from "react-router-dom";
 import ProductGrid from "../components/ProductGrid";
 import CartPanel from "../components/CartPanel";
 import DraftsModal from "../components/DraftsModal";
-import { usePOSDrafts } from "../hooks/usePOSDrafts";
-import { parseDecimalToNumber } from "../utils/money";
 import TablePicker from "../components/TablePicker";
-import {
-    fetchProducts,
-    createOrder,
-    fetchTables,
-    updateOrder,
-    payOrder,
-    getActiveOrderByTable,
-    cancelOrder,
-} from "../api";
-import { Link } from "react-router-dom";
-import { hasAdminRole, getToken } from "../utils/auth";
+import { parseDecimalToNumber } from "../utils/money";
+import { usePOSDrafts } from "../hooks/usePOSDrafts";
+import { supabase } from "../lib/supabase";
+import { getUser, hasAdminRole, cancelOrder, updateOrder } from "../api";
+
+
 export default function POS() {
     const [products, setProducts] = useState([]);
     const [cart, setCart] = useState([]);
     const [tables, setTables] = useState([]);
     const [currentTable, setCurrentTable] = useState(null);
-    const [showTablePicker, setShowTablePicker] = useState(false);
     const [orderId, setOrderId] = useState(null);
-    // console.log("🚀 ~ file: POS.jsx:26 ~ POS ~ orderId:", orderId);
-    const [searchTerm, setSearchTerm] = useState("");
+    const [showTablePicker, setShowTablePicker] = useState(false);
     const [showDrafts, setShowDrafts] = useState(false);
     const [toast, setToast] = useState(null);
+    const [searchTerm, setSearchTerm] = useState("");
     const [activeCategory, setActiveCategory] = useState("Tất cả");
 
-    // Refs để điều phối race condition và tránh stale closure
     const orderIdRef = useRef(orderId);
     const currentTableRef = useRef(currentTable);
     const syncTimerRef = useRef(null);
     const syncSeqRef = useRef(0);
     const tableLoadSeqRef = useRef(0);
-    const token = getToken();
-    const isAdmin = token && hasAdminRole(token);
+
+    const user = getUser();
+    const isAdmin = hasAdminRole();
 
     useEffect(() => {
         orderIdRef.current = orderId;
     }, [orderId]);
-
     useEffect(() => {
         currentTableRef.current = currentTable;
     }, [currentTable]);
 
     const { drafts, saveDraft, deleteDraft } = usePOSDrafts();
 
-    // Toast helper
     const showToast = useCallback((msg) => {
         setToast(msg);
         const id = setTimeout(() => setToast(null), 1800);
         return () => clearTimeout(id);
     }, []);
 
-    // Fetch products & tables on mount
+    // fetch products + tables
     useEffect(() => {
         let mounted = true;
         (async () => {
             try {
-                const [prods, tbls] = await Promise.all([
-                    fetchProducts(),
-                    fetchTables(),
+                const [
+                    { data: prods, error: pErr },
+                    { data: tbls, error: tErr },
+                ] = await Promise.all([
+                    supabase
+                        .from("menu_items")
+                        .select("*")
+                        .eq("available", true),
+                    supabase.from("table").select("*"),
                 ]);
                 if (!mounted) return;
+                if (pErr) throw pErr;
+                if (tErr) throw tErr;
                 setProducts(prods || []);
                 setTables(tbls || []);
             } catch (e) {
-                console.error(e);
+                console.error("Load init data", e);
                 showToast("Lỗi tải dữ liệu.");
             }
         })();
@@ -85,69 +84,50 @@ export default function POS() {
         };
     }, [showToast]);
 
-    // Danh mục
-    const categoriesUnique = useMemo(() => {
-        return Array.from(
-            new Set(products.map((p) => p.category).filter(Boolean))
-        );
-    }, [products]);
+    const categoriesUnique = useMemo(
+        () =>
+            Array.from(
+                new Set(products.map((p) => p.category).filter(Boolean))
+            ),
+        [products]
+    );
     const categories = useMemo(
         () => ["Tất cả", ...categoriesUnique],
         [categoriesUnique]
     );
-
     useEffect(() => {
         if (!categories.includes(activeCategory)) setActiveCategory("Tất cả");
     }, [categories, activeCategory]);
 
-    // Map nhanh id -> product
     const productsById = useMemo(() => {
-        const map = new Map();
-        for (const p of products) map.set(Number(p.id), p);
-        return map;
+        const m = new Map();
+        products.forEach((p) => m.set(Number(p.id), p));
+        return m;
     }, [products]);
 
-    // Tổng tiền
     const total = useMemo(
         () =>
             cart.reduce(
-                (sum, it) =>
-                    sum + parseDecimalToNumber(it.price) * (it.qty || 0),
+                (s, it) => s + parseDecimalToNumber(it.price) * (it.qty || 0),
                 0
             ),
         [cart]
     );
 
-    // Chuẩn hóa order item -> cart row
     const mapOrderToCart = useCallback(
-        (order) => {
-            const rawItems = Array.isArray(order?.items) ? order.items : [];
+        (order, items) => {
+            // order: order row, items: order_item rows
+            const rawItems = Array.isArray(items) ? items : [];
             return rawItems
                 .map((it) => {
-                    const menuEntity = it?.menuItem || null;
-                    const menuItemId = menuEntity?.id ?? it?.menuItemId;
-                    const qty = it?.quantity ?? 0;
-                    const priceFromItem =
-                        typeof it?.price === "number" ? it.price : null;
                     const product =
-                        productsById.get(Number(menuItemId)) || null;
-
-                    const name =
-                        menuEntity?.name ??
-                        product?.name ??
-                        `Món #${menuItemId ?? "?"}`;
-                    const price =
-                        priceFromItem ??
-                        (typeof menuEntity?.price === "number"
-                            ? menuEntity.price
-                            : null) ??
-                        (product ? parseFloat(product.price) : 0);
-
+                        productsById.get(Number(it.menuItemId)) || null;
                     return {
-                        id: Number(menuItemId),
-                        name,
-                        price: Number(price) || 0,
-                        qty: Number(qty) || 0,
+                        id: Number(it.menuItemId),
+                        name: product?.name || `Món #${it.menuItemId}`,
+                        price: Number(it.price ?? product?.price ?? 0),
+                        qty: Number(it.quantity || 0),
+                        addedAt: it.createdAt ?? undefined,
                     };
                 })
                 .filter((x) => (x.qty || 0) > 0);
@@ -155,7 +135,7 @@ export default function POS() {
         [productsById]
     );
 
-    // Debounced sync lên server - latest request wins
+    // scheduleSync: debounce write to supabase
     const scheduleSync = useCallback(
         (nextCart) => {
             const table = currentTableRef.current;
@@ -173,26 +153,64 @@ export default function POS() {
                     .map((c) => ({
                         menuItemId: Number(c.id),
                         quantity: Number(c.qty),
+                        price: Number(c.price || 0),
                     }));
 
                 try {
                     const existingOrderId = orderIdRef.current;
                     if (!existingOrderId) {
-                        // Tạo order kèm items → không cần updateOrder ngay sau đó
-                        const created = await createOrder({
-                            tableId: Number(table.id),
-                            items,
-                        });
-                        // Nếu có request mới hơn, bỏ qua kết quả
+                        // create order row
+                        const { data: insertedOrder, error: insertErr } =
+                            await supabase
+                                .from("order")
+                                .insert([
+                                    {
+                                        tableId: Number(table.id),
+                                        status: "PENDING",
+                                        total: 0,
+                                    },
+                                ])
+                                .select()
+                                .single();
+                        if (insertErr) throw insertErr;
+                        // insert order items
+                        const payloadItems = items.map((it) => ({
+                            orderId: insertedOrder.id,
+                            menuItemId: it.menuItemId,
+                            quantity: it.quantity,
+                            price: it.price,
+                        }));
+                        const { error: itemsErr } = await supabase
+                            .from("order_item")
+                            .insert(payloadItems);
+                        if (itemsErr) throw itemsErr;
+
+                        // compute total and update order
+                        const newTotal = payloadItems.reduce(
+                            (s, it) =>
+                                s +
+                                Number(it.price || 0) *
+                                    Number(it.quantity || 0),
+                            0
+                        );
+                        await supabase
+                            .from("order")
+                            .update({ total: newTotal })
+                            .eq("id", insertedOrder.id);
+
                         if (seq !== syncSeqRef.current) return;
-                        setOrderId(created.id);
-                        orderIdRef.current = created.id;
+                        setOrderId(insertedOrder.id);
+                        orderIdRef.current = insertedOrder.id;
                     } else {
-                        await updateOrder(Number(existingOrderId), items);
-                        // Local cart là nguồn tin cậy; không cần set snapshot từ server
+                        if (items.length === 0) {
+                            // chỉ cập nhật total = 0, giữ status pending
+                            await updateOrder(Number(existingOrderId), []);
+                        } else {
+                            await updateOrder(Number(existingOrderId), items);
+                        }
                     }
                 } catch (e) {
-                    console.error(e);
+                    console.error("Sync order error", e);
                     showToast("Lỗi đồng bộ order. Vui lòng thử lại.");
                 }
             }, 250);
@@ -200,7 +218,6 @@ export default function POS() {
         [showToast]
     );
 
-    // Helper cập nhật giỏ hàng + trigger sync
     const updateCart = useCallback(
         (updater) => {
             setCart((prev) => {
@@ -213,7 +230,7 @@ export default function POS() {
         [scheduleSync]
     );
 
-    // Handlers giỏ hàng
+    // cart handlers
     const handleAddToCart = useCallback(
         (item) => {
             if (!currentTableRef.current) {
@@ -237,55 +254,78 @@ export default function POS() {
                       ];
             });
         },
-        [showToast, updateCart]
+        [updateCart, showToast]
     );
 
     const incQty = useCallback(
-        (id) => {
+        (id) =>
             updateCart((prev) =>
                 prev.map((x) =>
                     x.id === id ? { ...x, qty: (x.qty || 0) + 1 } : x
                 )
-            );
-        },
+            ),
         [updateCart]
     );
-
     const decQty = useCallback(
-        (id) => {
+        (id) =>
             updateCart((prev) =>
                 prev.map((x) =>
                     x.id === id
                         ? { ...x, qty: Math.max(1, (x.qty || 1) - 1) }
                         : x
                 )
-            );
-        },
+            ),
         [updateCart]
     );
-
     const changeQty = useCallback(
-        (id, qty) => {
-            const safeQty = Math.max(1, Number(qty) || 1);
+        (id, qty) =>
             updateCart((prev) =>
-                prev.map((x) => (x.id === id ? { ...x, qty: safeQty } : x))
-            );
-        },
+                prev.map((x) =>
+                    x.id === id
+                        ? { ...x, qty: Math.max(1, Number(qty) || 1) }
+                        : x
+                )
+            ),
         [updateCart]
     );
-
     const removeItem = useCallback(
-        (id) => {
-            updateCart((prev) => prev.filter((x) => x.id !== id));
-        },
+        (id) => updateCart((prev) => prev.filter((x) => x.id !== id)),
         [updateCart]
     );
-
+    // const clearAll = useCallback(() => updateCart([]), [updateCart]);
     const clearAll = useCallback(() => {
-        updateCart([]);
-    }, [updateCart]);
+        // Nếu chưa có order thì chỉ clear local cart
+        if (!orderIdRef.current) {
+            setCart([]); // hoặc updateCart([])
+            return;
+        }
 
-    // Drafts
+        // Nếu có order trên server -> confirm trước khi huỷ
+        if (!confirm("Xác nhận huỷ order và giải phóng bàn?")) return;
+
+        (async () => {
+            try {
+                await cancelOrder(
+                    Number(orderIdRef.current),
+                    "Huỷ bởi nhân viên"
+                );
+                setCart([]);
+                setOrderId(null);
+                orderIdRef.current = null;
+                showToast("Đã huỷ order.");
+                // refresh tables nếu cần
+                const { data: tbls, error: tblErr } = await supabase
+                    .from("table")
+                    .select("*");
+                if (!tblErr) setTables(tbls || []);
+            } catch (e) {
+                console.error("Cancel order failed", e);
+                showToast("Huỷ order thất bại.");
+            }
+        })();
+    }, [showToast]);
+
+    // drafts
     const saveCurrentOrder = useCallback(() => {
         if (cart.length === 0)
             return showToast("Giỏ hàng trống, không thể lưu đơn.");
@@ -307,80 +347,99 @@ export default function POS() {
             setCart(d.items || []);
             setShowDrafts(false);
             showToast("Đã khôi phục đơn tạm.");
-            // Không auto sync ngay khi khôi phục draft để tránh tạo order ngoài ý muốn
         },
         [drafts, showToast]
     );
 
-    // Checkout
+    // checkout
     const handleCheckout = useCallback(async () => {
         if (!orderIdRef.current) {
             showToast("Chưa có order để thanh toán.");
             return;
         }
         try {
-            await payOrder(Number(orderIdRef.current));
+            await supabase
+                .from("order")
+                .update({ status: "PAID", updateAt: new Date().toISOString() })
+                .eq("id", orderIdRef.current);
             showToast(`Đã thanh toán order #${orderIdRef.current}.`);
             setCart([]);
             setOrderId(null);
             orderIdRef.current = null;
-            // Cập nhật lại danh sách bàn
-            try {
-                const tbls = await fetchTables();
-                setTables(tbls || []);
-            } catch {
-                /* ignore */
-            }
+            // refresh tables
+            const { data: tbls } = await supabase.from("table").select("*");
+            setTables(tbls || []);
         } catch (e) {
-            console.error(e);
+            console.error("Checkout error", e);
             showToast("Thanh toán thất bại, vui lòng thử lại.");
         }
     }, [showToast]);
+
     const handleCancelOrder = useCallback(
-        async (orderId, reason) => {
+        async (orderIdParam, reason) => {
+            if (!orderIdRef.current) {
+                showToast("Chưa có order để huỷ.");
+                return;
+            }
             try {
-                await cancelOrder(Number(orderIdRef.current), reason); // gọi API huỷ
-
-                setCart([]); // clear giỏ
-                setOrderId(null); // reset order
+                await supabase
+                    .from("order")
+                    .update({
+                        status: "CANCELLED",
+                        cancelReason: reason,
+                        cancelledAt: new Date().toISOString(),
+                    })
+                    .eq("id", orderIdRef.current);
+                // optionally delete items or keep for history
+                setCart([]);
+                setOrderId(null);
                 orderIdRef.current = null;
-
-                // Cập nhật lại danh sách bàn (giống handleCheckout)
-                try {
-                    const tbls = await fetchTables();
-                    // console.log("Tables after cancel:", tbls);
-                    setTables(tbls || []);
-                } catch {
-                    /* ignore */
-                }
-
-                showToast(`Đã huỷ order #${orderId}.`);
+                const { data: tbls } = await supabase.from("table").select("*");
+                setTables(tbls || []);
+                showToast(`Đã huỷ order #${orderIdParam}.`);
             } catch (e) {
-                console.error("❌ Lỗi huỷ order:", e);
+                console.error("Cancel order error", e);
                 showToast("Huỷ order thất bại.");
             }
         },
         [showToast]
     );
-    // Chọn bàn
+
+    // select table: load pending order items
     const handleSelectTable = useCallback(
         async (table) => {
             try {
                 setCurrentTable(table);
                 setShowTablePicker(false);
-
                 const mySeq = ++tableLoadSeqRef.current;
-                const active = await getActiveOrderByTable(table.id);
 
-                // Nếu người dùng đã chọn bàn khác trong lúc chờ, bỏ qua kết quả cũ
+                const { data: orderRow, error: orderErr } = await supabase
+                    .from("order")
+                    .select("*")
+                    .eq("tableId", table.id)
+                    .eq("status", "PENDING") // ✅ chỉ lấy pending
+                    .order("createdAt", { ascending: true })
+                    .limit(1)
+                    .maybeSingle(); // thay .single() → .maybeSingle() để ko throw khi không có dòng nào
+
                 if (mySeq !== tableLoadSeqRef.current) return;
 
-                if (active) {
-                    setOrderId(active.id);
-                    orderIdRef.current = active.id;
-                    setCart(mapOrderToCart(active));
+                if (orderErr) throw orderErr;
+
+                if (orderRow) {
+                    // fetch order items
+                    const { data: items, error: itemsErr } = await supabase
+                        .from("order_item")
+                        .select("*")
+                        .eq("orderId", orderRow.id);
+
+                    if (itemsErr) throw itemsErr;
+
+                    setOrderId(orderRow.id);
+                    orderIdRef.current = orderRow.id;
+                    setCart(mapOrderToCart(orderRow, items));
                     showToast(
-                        `Đang mở order #${active.id} của bàn ${table.name}.`
+                        `Đang mở order #${orderRow.id} của bàn ${table.name}.`
                     );
                 } else {
                     setOrderId(null);
@@ -391,7 +450,7 @@ export default function POS() {
                     );
                 }
             } catch (e) {
-                console.error(e);
+                console.error("Select table error", e);
                 showToast("Không thể tải order của bàn.");
             }
         },
@@ -400,7 +459,10 @@ export default function POS() {
 
     const refreshTables = useCallback(async () => {
         try {
-            const tbls = await fetchTables();
+            const { data: tbls, error } = await supabase
+                .from("table")
+                .select("*");
+            if (error) throw error;
             setTables(tbls || []);
         } catch (e) {
             console.error(e);
@@ -417,7 +479,7 @@ export default function POS() {
                 </div>
             )}
 
-            {/* Header chọn bàn */}
+            {/* Header */}
             <div className="px-6 pt-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                     <button
@@ -426,11 +488,7 @@ export default function POS() {
                     >
                         🍽️ Chọn bàn
                     </button>
-
-                    <div
-                        // onClick={() => setShowTablePicker(true)}
-                        className="px-4 py-2 rounded-lg bg-white border hover:bg-gray-50"
-                    >
+                    <div className="px-4 py-2 rounded-lg bg-white border hover:bg-gray-50">
                         <Link to="/orders">🏷️ Orders</Link>
                     </div>
                 </div>
@@ -441,7 +499,6 @@ export default function POS() {
                     >
                         📈 Doanh thu
                     </Link>
-
                     {isAdmin && (
                         <Link
                             to="/admin/menu"
@@ -471,7 +528,6 @@ export default function POS() {
             </div>
 
             <div className="grid grid-cols-12 h-screen gap-6 p-6">
-                {/* Panel sản phẩm */}
                 <div className="col-span-12 lg:col-span-8">
                     <ProductGrid
                         products={products}
@@ -484,7 +540,6 @@ export default function POS() {
                     />
                 </div>
 
-                {/* Panel giỏ hàng */}
                 <div className="col-span-12 lg:col-span-4">
                     <CartPanel
                         orderId={orderId}
@@ -513,7 +568,6 @@ export default function POS() {
                 onRefresh={refreshTables}
             />
 
-            {/* Modal Đơn tạm */}
             <DraftsModal
                 open={showDrafts}
                 onClose={() => setShowDrafts(false)}
