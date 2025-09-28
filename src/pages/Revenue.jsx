@@ -2,6 +2,17 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { getRevenue } from "../api";
 import { useNavigate } from "react-router-dom";
+import {
+    LineChart,
+    Line,
+    CartesianGrid,
+    XAxis,
+    YAxis,
+    Tooltip,
+    ResponsiveContainer,
+    BarChart,
+    Bar,
+} from "recharts";
 
 const formatCurrency = (n) =>
     (n || 0).toLocaleString("vi-VN", { style: "currency", currency: "VND" });
@@ -10,18 +21,18 @@ const formatDateTime = (iso) =>
 
 export default function Revenue() {
     const navigate = useNavigate();
-
-    function handleBack() {
-        navigate(-1); 
-    }
     const [raw, setRaw] = useState([]);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState(null);
 
-    // Bộ lọc thời gian
+    // Filters
     const [from, setFrom] = useState("");
     const [to, setTo] = useState("");
-    const [status, setStatus] = useState("paid"); // mặc định
+    const [status, setStatus] = useState("paid");
+
+    function handleBack() {
+        navigate(-1);
+    }
 
     // Quick presets
     const setToday = () => {
@@ -72,7 +83,6 @@ export default function Revenue() {
         })();
     }, [from, to, status]);
 
-    // Lọc client-side theo from/to
     const filtered = useMemo(() => {
         if (!raw?.length) return [];
         let res = raw;
@@ -94,15 +104,28 @@ export default function Revenue() {
     const orderCount = filtered.length;
     const avgOrder = orderCount ? totalRevenue / orderCount : 0;
 
+    // Chuẩn bị data cho chart
+    const chartData = useMemo(() => {
+        const map = {};
+        filtered.forEach((o) => {
+            const day = new Date(o.createdAt).toLocaleDateString("vi-VN");
+            map[day] = (map[day] || 0) + Number(o.totalAmount || 0);
+        });
+        return Object.entries(map).map(([day, revenue]) => ({
+            day,
+            revenue,
+        }));
+    }, [filtered]);
+
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-6">
+            {/* Header */}
             <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-4">
                     <button
                         className="px-4 py-2 rounded-lg bg-white border hover:bg-gray-50"
                         onClick={handleBack}
                     >
-                        {" "}
                         ⬅️ Quay lại
                     </button>
                     <h1 className="text-2xl font-semibold">📈 Doanh thu</h1>
@@ -150,30 +173,44 @@ export default function Revenue() {
                 </div>
             </div>
 
-            {/* Summary cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-                <div className="p-4 bg-white rounded-xl border">
-                    <div className="text-sm text-gray-500">Tổng doanh thu</div>
-                    <div className="text-2xl font-semibold mt-1">
+            {/* Summary Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+                <div className="p-5 bg-white rounded-xl border shadow-sm">
+                    <div className="text-sm text-gray-500">💰 Tổng doanh thu</div>
+                    <div className="text-2xl font-bold mt-1 text-emerald-600">
                         {formatCurrency(totalRevenue)}
                     </div>
                 </div>
-                <div className="p-4 bg-white rounded-xl border">
-                    <div className="text-sm text-gray-500">Số đơn</div>
-                    <div className="text-2xl font-semibold mt-1">
+                <div className="p-5 bg-white rounded-xl border shadow-sm">
+                    <div className="text-sm text-gray-500">🛒 Số đơn</div>
+                    <div className="text-2xl font-bold mt-1 text-blue-600">
                         {orderCount}
                     </div>
                 </div>
-                <div className="p-4 bg-white rounded-xl border">
-                    <div className="text-sm text-gray-500">TB/đơn</div>
-                    <div className="text-2xl font-semibold mt-1">
+                <div className="p-5 bg-white rounded-xl border shadow-sm">
+                    <div className="text-sm text-gray-500">📊 TB/đơn</div>
+                    <div className="text-2xl font-bold mt-1 text-purple-600">
                         {formatCurrency(avgOrder)}
                     </div>
                 </div>
             </div>
 
+            {/* Chart */}
+            <div className="bg-white rounded-xl border shadow-sm p-6 mb-8">
+                <h2 className="font-semibold mb-4">Doanh thu theo ngày</h2>
+                <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={chartData}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="day" />
+                        <YAxis />
+                        <Tooltip formatter={(v) => formatCurrency(v)} />
+                        <Bar dataKey="revenue" fill="#4f46e5" radius={[6,6,0,0]} />
+                    </BarChart>
+                </ResponsiveContainer>
+            </div>
+
             {/* Table */}
-            <div className="bg-white rounded-xl border overflow-hidden">
+            <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
                 <div className="p-4 border-b flex items-center justify-between">
                     <div className="font-medium">Danh sách đơn</div>
                     <div className="text-sm text-gray-500">
@@ -190,36 +227,22 @@ export default function Revenue() {
                         <table className="min-w-full text-sm">
                             <thead className="bg-gray-50">
                                 <tr>
-                                    <th className="text-left px-4 py-2 border-b">
-                                        Order #
-                                    </th>
-                                    <th className="text-left px-4 py-2 border-b">
-                                        Bàn
-                                    </th>
-                                    <th className="text-left px-4 py-2 border-b">
-                                        Thời gian
-                                    </th>
-                                    <th className="text-right px-4 py-2 border-b">
-                                        Số tiền
-                                    </th>
+                                    <th className="text-left px-4 py-2 border-b">Order #</th>
+                                    <th className="text-left px-4 py-2 border-b">Bàn</th>
+                                    <th className="text-left px-4 py-2 border-b">Thời gian</th>
+                                    <th className="text-right px-4 py-2 border-b">Số tiền</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {filtered.map((o) => (
                                     <tr
                                         key={o.id}
-                                        className="odd:bg-white even:bg-gray-50"
+                                        className="odd:bg-white even:bg-gray-50 hover:bg-indigo-50"
                                     >
-                                        <td className="px-4 py-2 border-b">
-                                            #{o.id}
-                                        </td>
-                                        <td className="px-4 py-2 border-b">
-                                            {o.table}
-                                        </td>
-                                        <td className="px-4 py-2 border-b">
-                                            {formatDateTime(o.createdAt)}
-                                        </td>
-                                        <td className="px-4 py-2 border-b text-right font-medium">
+                                        <td className="px-4 py-2 border-b font-medium">#{o.id}</td>
+                                        <td className="px-4 py-2 border-b">{o.table}</td>
+                                        <td className="px-4 py-2 border-b">{formatDateTime(o.createdAt)}</td>
+                                        <td className="px-4 py-2 border-b text-right font-semibold text-emerald-600">
                                             {formatCurrency(o.totalAmount)}
                                         </td>
                                     </tr>
@@ -230,8 +253,7 @@ export default function Revenue() {
                                             colSpan={4}
                                             className="px-4 py-6 text-center text-gray-500"
                                         >
-                                            Không có dữ liệu trong khoảng đã
-                                            chọn.
+                                            Không có dữ liệu trong khoảng đã chọn.
                                         </td>
                                     </tr>
                                 )}

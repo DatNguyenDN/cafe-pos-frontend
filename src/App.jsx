@@ -6,8 +6,7 @@ import Dashboard from "./pages/Dashboard";
 import Revenue from "./pages/Revenue";
 import MenuAdminPage from "./pages/MenuAdmin"; // thư mục có index.jsx xuất default
 import { isTokenValid, hasAdminRole, getToken } from "./utils/auth";
-
-
+import OrderPage from "./pages/OrderPage";
 function PrivateRoute({ children }) {
     const token = getToken();
     return isTokenValid(token) ? children : <Navigate to="/login" replace />;
@@ -65,6 +64,7 @@ export default function App() {
                 />
 
                 <Route path="/" element={<Navigate to="/pos" replace />} />
+                <Route path="/orders" element={<OrderPage />} />
             </Routes>
         </div>
     );

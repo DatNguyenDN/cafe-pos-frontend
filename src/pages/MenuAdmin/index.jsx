@@ -31,10 +31,6 @@ export default function MenuAdminPage() {
 
     const navigate = useNavigate();
 
-    function handleBack() {
-        navigate(-1);
-    }
-
     const load = async () => {
         setLoading(true);
         setErr(null);
@@ -159,7 +155,7 @@ export default function MenuAdminPage() {
                 <div className="flex items-center gap-4">
                     <button
                         className="px-4 py-2 rounded-lg bg-white border hover:bg-gray-50"
-                        onClick={handleBack}
+                        onClick={() => navigate("/pos")}
                     >
                         {" "}
                         ⬅️ Quay lại

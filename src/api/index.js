@@ -19,7 +19,7 @@ api.interceptors.request.use((cfg) => {
 // ========== Auth ==========
 export async function login(credentials) {
   const r = await api.post("/auth/login", credentials);
-  console.log("Login response:", r.data);
+  // console.log("Login response:", r.data);
   return r.data;
 }
 
@@ -82,6 +82,14 @@ export async function fetchOrdersByTable(tableId) {
 }
 
 /**
+ * Lấy tất cả orders (có thể sort asc|desc)
+ * GET /orders?sort=asc
+ */
+export async function fetchOrders(params = {}) {
+  return api.get("/orders", { params }).then((r) => r.data);
+}
+
+/**
  * Tạo order mới cho bàn
  * POST /orders
  * body: { tableId: number, items: { menuItemId:number, quantity:number }[] }
@@ -118,6 +126,12 @@ export async function payOrder(orderId) {
   return api.patch(`/orders/${orderId}/pay`).then((r) => r.data);
 }
 
+export async function cancelOrder(orderId, reason) {
+  return api.post(`/orders/${orderId}/cancel`, { reason }).then((r) => r.data);
+}
+
+
+
 // ========== Customers (giữ nguyên) ==========
 export async function fetchCustomers(q) {
   return api.get("/customers", { params: { q } }).then((r) => r.data);
@@ -127,6 +141,8 @@ export async function fetchCustomers(q) {
 export async function getRevenue(params = {}) {
   return api.get('/orders/revenue', { params }).then(r => r.data);
 }
+
+
 
 
 

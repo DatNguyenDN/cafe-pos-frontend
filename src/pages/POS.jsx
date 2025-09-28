@@ -19,9 +19,10 @@ import {
     updateOrder,
     payOrder,
     getActiveOrderByTable,
+    cancelOrder,
 } from "../api";
 import { Link } from "react-router-dom";
-import { hasAdminRole, getToken } from '../utils/auth';
+import { hasAdminRole, getToken } from "../utils/auth";
 export default function POS() {
     const [products, setProducts] = useState([]);
     const [cart, setCart] = useState([]);
@@ -29,6 +30,7 @@ export default function POS() {
     const [currentTable, setCurrentTable] = useState(null);
     const [showTablePicker, setShowTablePicker] = useState(false);
     const [orderId, setOrderId] = useState(null);
+    // console.log("🚀 ~ file: POS.jsx:26 ~ POS ~ orderId:", orderId);
     const [searchTerm, setSearchTerm] = useState("");
     const [showDrafts, setShowDrafts] = useState(false);
     const [toast, setToast] = useState(null);
@@ -334,7 +336,32 @@ export default function POS() {
             showToast("Thanh toán thất bại, vui lòng thử lại.");
         }
     }, [showToast]);
+    const handleCancelOrder = useCallback(
+        async (orderId, reason) => {
+            try {
+                await cancelOrder(Number(orderIdRef.current), reason); // gọi API huỷ
 
+                setCart([]); // clear giỏ
+                setOrderId(null); // reset order
+                orderIdRef.current = null;
+
+                // Cập nhật lại danh sách bàn (giống handleCheckout)
+                try {
+                    const tbls = await fetchTables();
+                    // console.log("Tables after cancel:", tbls);
+                    setTables(tbls || []);
+                } catch {
+                    /* ignore */
+                }
+
+                showToast(`Đã huỷ order #${orderId}.`);
+            } catch (e) {
+                console.error("❌ Lỗi huỷ order:", e);
+                showToast("Huỷ order thất bại.");
+            }
+        },
+        [showToast]
+    );
     // Chọn bàn
     const handleSelectTable = useCallback(
         async (table) => {
@@ -392,12 +419,21 @@ export default function POS() {
 
             {/* Header chọn bàn */}
             <div className="px-6 pt-4 flex items-center justify-between">
-                <button
-                    onClick={() => setShowTablePicker(true)}
-                    className="px-4 py-2 rounded-lg bg-white border hover:bg-gray-50"
-                >
-                    🍽️ Chọn bàn
-                </button>
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={() => setShowTablePicker(true)}
+                        className="px-4 py-2 rounded-lg bg-white border hover:bg-gray-50"
+                    >
+                        🍽️ Chọn bàn
+                    </button>
+
+                    <div
+                        // onClick={() => setShowTablePicker(true)}
+                        className="px-4 py-2 rounded-lg bg-white border hover:bg-gray-50"
+                    >
+                        <Link to="/orders">🏷️ Orders</Link>
+                    </div>
+                </div>
                 <div className="flex items-center gap-3">
                     <Link
                         to="/revenue"
@@ -451,6 +487,7 @@ export default function POS() {
                 {/* Panel giỏ hàng */}
                 <div className="col-span-12 lg:col-span-4">
                     <CartPanel
+                        orderId={orderId}
                         cart={cart}
                         total={total}
                         onInc={incQty}
@@ -458,6 +495,7 @@ export default function POS() {
                         onChangeQty={changeQty}
                         onRemove={removeItem}
                         onCheckout={handleCheckout}
+                        onCancelOrder={handleCancelOrder}
                         onClearAll={clearAll}
                         onSaveDraft={saveCurrentOrder}
                         onOpenDrafts={() => setShowDrafts(true)}
